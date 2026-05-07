@@ -1,0 +1,137 @@
+/*
+  Global styles. Imported once in src/app/layout.tsx.
+
+  Tailwind CSS v4 uses CSS-first configuration. Brand tokens (colors, fonts,
+  spacing) are defined as CSS custom properties inside the @theme block below.
+  To customize the brand, edit the @theme values rather than touching components.
+
+  Docs: https://tailwindcss.com/docs/theme
+*/
+
+@import "tailwindcss";
+
+/*
+  Brand tokens.
+  Reference these in your components like: bg-brand-primary, text-brand-muted, etc.
+  Tailwind generates utility classes for every named token here.
+*/
+@theme {
+  /* Brand colors. Replace with your actual brand. */
+  --color-brand-primary: oklch(0.55 0.18 264);
+  --color-brand-primary-hover: oklch(0.50 0.18 264);
+  --color-brand-accent: oklch(0.70 0.15 175);
+  --color-brand-dark: oklch(0.20 0.02 264);
+  --color-brand-light: oklch(0.98 0.005 264);
+  --color-brand-muted: oklch(0.55 0.02 264);
+  --color-brand-border: oklch(0.90 0.01 264);
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /* Animation timings */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/*
+  Base styles.
+  These apply globally before any utility classes.
+*/
+@layer base {
+  /* Smooth scrolling fallback (Lenis takes over for fancy smooth scroll) */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Disable native smooth scroll when Lenis is active */
+  html.lenis,
+  html.lenis body {
+    height: auto;
+  }
+
+  html.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+
+  html.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
+  }
+
+  html.lenis-stopped body {
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-brand-dark);
+    background-color: var(--color-brand-light);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Make sure focus rings are visible (accessibility requirement) */
+  *:focus-visible {
+    outline: 2px solid var(--color-brand-primary);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+
+  /* Headings use the display font and tighter line height */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    line-height: 1.1;
+    text-wrap: balance;
+  }
+
+  /* Better paragraph wrapping on supported browsers */
+  p {
+    text-wrap: pretty;
+  }
+
+  /* Reduce motion for users who prefer it (accessibility) */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/*
+  Utility classes.
+  Add custom utilities here that aren't covered by Tailwind's defaults.
+*/
+@layer utilities {
+  /* Container with sensible max-width and padding */
+  .container-page {
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+    max-width: 80rem;
+  }
+
+  @media (min-width: 768px) {
+    .container-page {
+      padding-inline: 2rem;
+    }
+  }
+
+  /* Visually hide an element while keeping it accessible to screen readers */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+}

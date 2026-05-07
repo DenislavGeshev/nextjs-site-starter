@@ -1,0 +1,100 @@
+/**
+ * Wrangler configuration for OpenNext + Cloudflare Workers.
+ * Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+ *
+ * IMPORTANT: When asked to add a Cloudflare binding (KV, R2, D1, Durable
+ * Objects, Workers AI, etc.), Claude should consult the Cloudflare Workers
+ * docs first. Bindings need both this file AND code changes to work.
+ *
+ * After editing this file, run `npm run cf-typegen` to regenerate the
+ * TypeScript types in cloudflare-env.d.ts.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // The name of your Worker. Becomes part of the default URL:
+  // https://<name>.<your-subdomain>.workers.dev
+  // Change this to match your project.
+  "name": "marketing-site",
+
+  // Entry point. OpenNext writes the worker here during build.
+  // Don't change unless you know what you're doing.
+  "main": ".open-next/worker.js",
+
+  // Compatibility date. Tells Cloudflare which version of the Workers runtime
+  // to use. MUST be 2025-04-15 or later for OpenNext to work correctly.
+  // Older dates have known issues with process.env not being populated.
+  "compatibility_date": "2025-04-15",
+
+  // Required for Next.js to work properly on Workers.
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Static assets directory. OpenNext puts pre-rendered pages and static
+  // files here during build. The ASSETS binding makes them available to
+  // the worker for serving.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // Observability: send logs and errors to Cloudflare's dashboard.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+
+  // ============================================================================
+  // OPTIONAL BINDINGS , uncomment and configure as needed
+  // ============================================================================
+
+  // KV Namespace (key-value storage)
+  // Useful for: session storage, simple caching, feature flags
+  // To create: npx wrangler kv:namespace create my-kv
+  //
+  // "kv_namespaces": [
+  //   {
+  //     "binding": "MY_KV",
+  //     "id": "<your-kv-id-from-create-command>"
+  //   }
+  // ],
+
+  // R2 Bucket (object storage for media files)
+  // Useful for: videos, large images, downloadable files
+  // To create: npx wrangler r2 bucket create my-bucket
+  //
+  // "r2_buckets": [
+  //   {
+  //     "binding": "MEDIA",
+  //     "bucket_name": "marketing-site-media"
+  //   }
+  // ],
+
+  // R2 Bucket for Next.js incremental cache (if using ISR with R2)
+  // Required if you uncommented r2IncrementalCache in open-next.config.ts
+  //
+  // "r2_buckets": [
+  //   {
+  //     "binding": "NEXT_INC_CACHE_R2_BUCKET",
+  //     "bucket_name": "next-cache"
+  //   }
+  // ],
+
+  // D1 Database (SQLite at the edge)
+  // Useful for: form submissions, user data, simple databases
+  // To create: npx wrangler d1 create my-database
+  //
+  // "d1_databases": [
+  //   {
+  //     "binding": "DB",
+  //     "database_name": "marketing-site-db",
+  //     "database_id": "<your-database-id>"
+  //   }
+  // ],
+
+  // Cloudflare Images binding (for runtime image transforms)
+  // No setup needed, just enable it.
+  //
+  // "images": {
+  //   "binding": "IMAGES"
+  // }
+}
