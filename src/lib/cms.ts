@@ -12,7 +12,63 @@
  *   "Please update src/lib/cms.ts to fetch from [Sanity / Payload]. Use the
  *   credentials in .env. Keep the function signatures the same. Use Next.js
  *   fetch caching with appropriate revalidation periods (1 hour for lists,
- *   1 day for individual posts)."
+ *   1 day for individual posts). Follow the Cloudflare guardrails in
+ *   CLAUDE.md — real env fallbacks, no short-circuit guards."
+ *
+ * ============================================================================
+ * ⚠️  CLOUDFLARE GUARDRAILS — READ BEFORE WIRING UP SANITY
+ * ============================================================================
+ *
+ * Two production failures (Cloudflare 1102 / 1101) trace back to the same
+ * three patterns. When you (or Claude) replace this file with real code,
+ * the wiring MUST follow these rules. See CLAUDE.md "guardrails" for the
+ * full reasoning.
+ *
+ * 1. REAL FALLBACKS, NEVER 'placeholder'.
+ *
+ *    // ✅ CORRECT (e.g. in src/lib/sanity.ts):
+ *    export const client = createClient({
+ *      projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'YOUR_REAL_PROJECT_ID',
+ *      dataset:   process.env.NEXT_PUBLIC_SANITY_DATASET   ?? 'production',
+ *      apiVersion: process.env.NEXT_PUBLIC_SANITY_API_VERSION ?? '2025-01-01',
+ *      useCdn: true,
+ *    });
+ *
+ *    // ❌ WRONG — a missing Build env var silently produces an empty site:
+ *    projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'placeholder',
+ *
+ *    NEXT_PUBLIC_* vars are inlined into the client bundle at build time.
+ *    They are public — projectId, dataset, apiVersion are NOT secrets. A
+ *    placeholder fallback turns a missing CI Build var into a silent
+ *    SSG → Dynamic regression that surfaces as Cloudflare 1102 under
+ *    traffic, not as a build error.
+ *
+ * 2. NO SHORT-CIRCUIT GUARDS in fetch helpers.
+ *
+ *    // ❌ WRONG — hides build-time data when env is missing:
+ *    export async function sanityFetch<T>(query: string): Promise<T[]> {
+ *      if (!process.env.NEXT_PUBLIC_SANITY_PROJECT_ID) return [] as T[];
+ *      return client.fetch(query);
+ *    }
+ *
+ *    With real fallbacks in rule 1, this guard is a footgun. If you genuinely
+ *    can't reach the CMS, let the fetch throw so the build fails loudly.
+ *
+ * 3. ROOT LAYOUT FETCHES RUN ON EVERY RENDER.
+ *
+ *    If header/footer/nav data comes from the CMS in src/app/layout.tsx,
+ *    cache aggressively (`{ next: { revalidate: 3600 } }` minimum) and
+ *    prefer a single combined query over many small ones. Without R2
+ *    incremental cache, OpenNext's cache is per-isolate — every cold
+ *    start re-fetches.
+ *
+ * 4. AFTER WIRING UP, RUN `npm run build` AND CHECK THE ROUTE TABLE.
+ *
+ *    Dynamic routes (/blog/[slug], etc.) should show as `●` (SSG) — NOT
+ *    `ƒ` (Dynamic). A flip from ● to ƒ between builds is the leading
+ *    indicator of broken Build env vars or generateStaticParams returning
+ *    [].
+ * ============================================================================
  */
 
 // ============================================================================
@@ -105,15 +161,18 @@ const PLACEHOLDER_POSTS: Post[] = [
  * @param limit Optional maximum number to return
  */
 export async function getAllPosts(limit?: number): Promise<Post[]> {
-  // TODO: Replace with real CMS fetch.
+  // TODO: Replace with real CMS fetch. Follow the guardrails in the file
+  // header — no 'placeholder' fallbacks, no short-circuit guards.
   //
   // Example for Sanity (using next-sanity):
-  //   import { client } from '@/sanity/client';
+  //   import { client } from '@/lib/sanity';
   //   return client.fetch(
   //     `*[_type == "post"] | order(publishedAt desc) [0...$limit] { ... }`,
   //     { limit: limit ?? 100 },
   //     { next: { revalidate: 3600 } } // revalidate hourly
   //   );
+  //   // NOTE: do NOT guard this with `if (!process.env.NEXT_PUBLIC_SANITY_PROJECT_ID) return [];`
+  //   // The createClient fallback should already point at the real project.
   //
   // Example for Payload:
   //   const res = await fetch(

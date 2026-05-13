@@ -92,7 +92,19 @@
   // ],
 
   // Cloudflare Images binding (for runtime image transforms)
-  // No setup needed, just enable it.
+  //
+  // ⚠️  DO NOT UNCOMMENT THIS UNLESS YOU HAVE PAID FOR AND ENABLED
+  //     CLOUDFLARE IMAGES ON THIS ACCOUNT.
+  //
+  // OpenNext's image handler calls env.IMAGES.input(stream).transform(...).
+  // Declaring the binding here is enough for the deploy to succeed, but
+  // actually invoking it without the paid Cloudflare Images product throws
+  // Cloudflare 1101 at runtime on every `/_next/image?url=...` request.
+  //
+  // This starter ships with `images.unoptimized: true` in next.config.ts so
+  // <Image> bypasses /_next/image entirely. Keep it that way unless you've
+  // explicitly subscribed to Cloudflare Images. See README "Image
+  // optimization on Cloudflare" and CLAUDE.md guardrail 3.
   //
   // "images": {
   //   "binding": "IMAGES"

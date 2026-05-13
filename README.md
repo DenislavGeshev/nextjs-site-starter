@@ -228,6 +228,49 @@ npm run deploy
 
 ---
 
+## Cloudflare deployment — required environment setup
+
+> **READ THIS BEFORE YOUR FIRST DEPLOY.** Two specific Cloudflare gotchas have taken sites down in production. This section is the prevention.
+
+### Build vs Runtime variables (this trips everyone)
+
+Cloudflare Workers Builds has **two separate env stores** in the dashboard:
+
+- **Build variables and secrets** — available during `npx opennextjs-cloudflare build`
+- **Runtime variables and secrets** — available to the deployed Worker
+
+`NEXT_PUBLIC_*` env vars are **inlined into the JS bundle at build time** by Next.js. They MUST be in the Build environment, not just Runtime. If they're runtime-only, the build runs with the fallbacks in `src/lib/sanity.ts` (or your equivalent CMS client), every `generateStaticParams` returns `[]`, routes ship as `ƒ Dynamic` instead of `● SSG`, and you'll see Cloudflare 1102 (Worker CPU exceeded) errors under traffic.
+
+This boilerplate is wired so that, if you connect Sanity, you should hardcode the **real** public projectId/dataset/apiVersion as fallbacks in `createClient`. A missing Build var should produce a working site, not a silent SSG → Dynamic regression. See the CLAUDE.md guardrails section for the rules.
+
+| Variable | Build | Runtime | Notes |
+|---|---|---|---|
+| `NEXT_PUBLIC_SANITY_PROJECT_ID` | ✅ | ✅ | Public, plain-text — also hardcoded as a fallback in `lib/sanity.ts` |
+| `NEXT_PUBLIC_SANITY_DATASET` | ✅ | ✅ | Public (usually `production`) |
+| `NEXT_PUBLIC_SANITY_API_VERSION` | ✅ | ✅ | Public (an ISO date like `2025-01-01`) |
+| `SANITY_API_TOKEN` | — | ✅ Secret | Server-only, runtime only |
+| `SANITY_WEBHOOK_SECRET` | — | ✅ Secret | Server-only, runtime only |
+| `PAYLOAD_API_URL` | ✅ | ✅ | Public URL (if using Payload) |
+| `PAYLOAD_API_KEY` | — | ✅ Secret | Server-only, runtime only |
+
+After a deploy, check the build logs for the `next build` route summary. If routes that should be `●` (SSG) are showing as `ƒ` (Dynamic), a Build env var is almost certainly missing.
+
+### Image optimization on Cloudflare
+
+`next/image` routes through `/_next/image`, which OpenNext implements via the `env.IMAGES` binding — a **paid Cloudflare Images product**. If you haven't enabled it on your account, every `<Image>` of a remote PNG/JPEG/WebP/AVIF will throw Cloudflare 1101 (Worker threw exception) at runtime.
+
+This boilerplate ships with `images.unoptimized: true` in `next.config.ts` and no `IMAGES` binding in `wrangler.jsonc`. Sanity and Payload CDNs already optimize via URL params (`?w=&h=&auto=format`), so the Next optimizer is double-work even when it works.
+
+**To re-enable Next image optimization, you must:**
+1. Subscribe to Cloudflare Images on your account
+2. Add `"images": { "binding": "IMAGES" }` to `wrangler.jsonc`
+3. Remove `unoptimized: true` from `next.config.ts`
+4. Re-deploy and test a remote image URL before going live
+
+If you just want responsive images from Sanity/Payload without paying for Cloudflare Images, keep the defaults and pass size params in your image URLs.
+
+---
+
 ## Environment variables
 
 There are two env files because of how Next.js and Cloudflare Workers handle them differently:
@@ -235,7 +278,7 @@ There are two env files because of how Next.js and Cloudflare Workers handle the
 - **`.env`** is read by the Next.js dev server (`npm run dev`).
 - **`.dev.vars`** is read by Wrangler when previewing in the Cloudflare runtime (`npm run preview`).
 
-Keep them in sync. For production, set the same variables in the Cloudflare dashboard under your Worker's Settings then Variables and Secrets.
+Keep them in sync. For production, set the same variables in the Cloudflare dashboard under your Worker's Settings → Variables and Secrets. **Remember:** in production, `NEXT_PUBLIC_*` variables must go in the **Build** environment (not just Runtime) — see the table above.
 
 ```bash
 cp .env.example .env
@@ -269,6 +312,12 @@ Then edit both files with your real values.
 **Env vars work locally but not in Cloudflare preview:** Cloudflare uses `.dev.vars`, not `.env`. Copy your values to both files.
 
 **Build succeeds but deploy fails:** Check `wrangler.jsonc` has `compatibility_date` set to `2025-04-15` or later. Older dates have known runtime issues with OpenNext.
+
+**Cloudflare 1102 (Worker CPU exceeded) under load:** Almost always means `NEXT_PUBLIC_*` Build variables are missing on Cloudflare. The build silently fell back to placeholder values, every dynamic route shipped as `ƒ Dynamic` instead of `● SSG`, and every request now hits the Worker. Fix: add the variables to the **Build** environment in the Cloudflare dashboard (not just Runtime), and confirm `lib/sanity.ts` uses **real** projectId/dataset fallbacks (never `'placeholder'`). See "Cloudflare deployment" above.
+
+**Cloudflare 1101 (Worker threw exception) on `/_next/image?url=...`:** The `env.IMAGES` binding needs Cloudflare Images enabled on your account (a paid product). This starter ships with `images.unoptimized: true` to avoid that — if you re-enabled image optimization without subscribing, revert it. See "Image optimization on Cloudflare" above.
+
+**Routes flip from `●` (SSG) to `ƒ` (Dynamic) between builds:** This is the leading indicator of broken Build-time env vars or a `generateStaticParams` that's returning `[]`. Run `npm run build` locally, compare the route summary, and investigate any route that changed.
 
 ---
 

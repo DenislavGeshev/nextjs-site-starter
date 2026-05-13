@@ -53,6 +53,60 @@ This site deploys to Cloudflare Workers via OpenNext, NOT to Vercel. There are s
 
 ---
 
+## CRITICAL: Cloudflare + Next.js guardrails (post-mortem rules)
+
+These rules exist because of two production failures we already paid for. Treat them as hard constraints unless the user explicitly opts out.
+
+### 1. Never use `'placeholder'` (or any fake value) as a Sanity fallback
+
+`NEXT_PUBLIC_*` env vars are inlined into the JS bundle at build time. They are public by definition (projectId, dataset, apiVersion). When wiring up `lib/sanity.ts` or any CMS client, the fallback in `createClient({ projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? '...' })` MUST be the real projectId, not a placeholder string.
+
+**Why:** A `'placeholder'` fallback turns a missing CI Build variable into a silent SSG → Dynamic regression. `generateStaticParams()` queries fail (caught by try/catch → return `[]`), dynamic routes ship as `ƒ Dynamic` instead of `● SSG`, every request hits the Worker, and the site melts under traffic with Cloudflare 1102 errors. A real fallback projectId means a missing Build var produces a working site, not a silent regression.
+
+**How to apply:** Whenever wiring up `createClient` for Sanity or a similar CMS, hardcode the actual public values as fallbacks. Yes, even though they may feel like "secrets" — they are not secrets, they end up in the client bundle.
+
+### 2. Never short-circuit fetch helpers on missing env vars
+
+Do NOT add patterns like `if (!process.env.NEXT_PUBLIC_SANITY_PROJECT_ID) return []` inside `sanityFetch` or equivalents. With a real fallback projectId in `createClient` (rule 1), this guard silently hides build-time data and produces an empty site instead of an error.
+
+**Why:** Same root cause as rule 1 — silent build-time failures are worse than loud ones. If you genuinely cannot reach the CMS, let it throw so the build fails visibly.
+
+**How to apply:** If you see this pattern, delete it. If a user asks you to add it, explain rules 1 and 2.
+
+### 3. Don't enable `next/image` optimization unless Cloudflare Images is paid for on this account
+
+`next/image` routes through `/_next/image` which OpenNext implements via the `env.IMAGES` binding — a paid Cloudflare Images product. If the binding isn't backed by the paid service, every `<Image>` of a remote PNG/JPEG/WebP/AVIF throws Cloudflare 1101 at runtime.
+
+**How to apply:**
+- Keep `images.unoptimized: true` in `next.config.ts`.
+- Do NOT add `"images": { "binding": "IMAGES" }` to `wrangler.jsonc`.
+- Sanity / Payload CDNs already optimize via URL params (`?w=&h=&auto=format`); routing through `/_next/image` is double-work even when it works.
+- To re-enable optimization, the user must subscribe to Cloudflare Images first, then explicitly ask for the three-step re-enable (binding + remove `unoptimized` + verify).
+
+### 4. Root layout fetches are CPU-expensive on every render
+
+If nav/header/footer data comes from the CMS in `src/app/layout.tsx`, it runs on every page render. Cache aggressively (`revalidate: 3600+`) and prefer a single combined query over many small ones. Without R2 incremental cache, OpenNext's cache is per-isolate in-memory — every cold start re-fetches and a traffic spike multiplies CMS load.
+
+**How to apply:** When adding CMS data to the root layout, use long revalidation windows. If the project grows to handle real traffic, suggest adding an R2 incremental cache bucket (`NEXT_INC_CACHE_R2_BUCKET` in `wrangler.jsonc` + `r2IncrementalCache` in `open-next.config.ts`).
+
+### 5. SSG → Dynamic regressions are a leading indicator of broken Build env
+
+When `next build` summary shows routes flipping from `●` (SSG) to `ƒ` (Dynamic) between builds, STOP and find out why. The CI build summary table is the single best signal that Build-time env vars are missing or that `generateStaticParams` is returning `[]`. Compare against the local `next build` output.
+
+**How to apply:** After any change that touches data fetching, env vars, or `generateStaticParams`, run `npm run build` and inspect the route table. SSG routes silently turning Dynamic is the failure mode that causes Cloudflare 1102 under traffic.
+
+### 6. Build vs Runtime env vars are separate stores in Cloudflare
+
+Cloudflare Workers Builds has two independent env stores:
+- **Build variables and secrets** — available during `npx opennextjs-cloudflare build`
+- **Runtime variables and secrets** — available to the deployed Worker
+
+`NEXT_PUBLIC_*` vars are inlined at build time and MUST be in the Build store (and usually also Runtime for consistency). Server-only secrets (`SANITY_API_TOKEN`, `SANITY_WEBHOOK_SECRET`) belong in Runtime only.
+
+**How to apply:** When walking the user through Cloudflare dashboard setup, always specify which store each variable goes in. See the README "Cloudflare deployment — required environment setup" section for the canonical table.
+
+---
+
 ## Project conventions
 
 ### Server vs client components
@@ -107,6 +161,7 @@ Server components are faster, ship less JS, and are SEO-friendly. Don't reach fo
 - Use `priority` only on above-the-fold critical images (LCP candidates). Default lazy loading is correct for everything else.
 - Provide descriptive `alt` text for every image.
 - For images from a CMS (remote URLs), add the domain to `next.config.ts` `images.remotePatterns`.
+- **This project ships with `images.unoptimized: true` by design** (see guardrail 3 above). Don't change that unless Cloudflare Images is paid for. For Sanity / Payload images, pass `?w=&h=&auto=format` URL params to get optimized variants from the CMS CDN.
 
 ### Animations with Motion
 
@@ -147,6 +202,10 @@ Server components are faster, ship less JS, and are SEO-friendly. Don't reach fo
 - ❌ Don't commit `.env` or `.dev.vars` files (both are in `.gitignore`)
 - ❌ Don't use deprecated Next.js APIs (always check Context7 first)
 - ❌ Don't use Vercel-specific packages or APIs
+- ❌ Don't use `'placeholder'` (or any fake value) as a Sanity/CMS env fallback — see guardrail 1
+- ❌ Don't add `if (!process.env.X) return []` guards to CMS fetch helpers — see guardrail 2
+- ❌ Don't set `images.unoptimized: false` or add `"images": { "binding": "IMAGES" }` to `wrangler.jsonc` unless Cloudflare Images is paid for — see guardrail 3
+- ❌ Don't add CMS fetches to `src/app/layout.tsx` without long revalidation — see guardrail 4
 
 ---
 
