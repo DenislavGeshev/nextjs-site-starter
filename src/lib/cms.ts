@@ -24,7 +24,9 @@
  * the wiring MUST follow these rules. See CLAUDE.md "guardrails" for the
  * full reasoning.
  *
- * 1. REAL FALLBACKS, NEVER 'placeholder'.
+ * 1. REAL FALLBACKS — NEVER 'placeholder' / fake URLs.
+ *
+ *    For Sanity (NEXT_PUBLIC_* vars are inlined into the client bundle):
  *
  *    // ✅ CORRECT (e.g. in src/lib/sanity.ts):
  *    export const client = createClient({
@@ -34,25 +36,49 @@
  *      useCdn: true,
  *    });
  *
- *    // ❌ WRONG — a missing Build env var silently produces an empty site:
+ *    // ❌ WRONG — Sanity client accepts placeholder without throwing,
+ *    //           ships an empty site:
  *    projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'placeholder',
  *
- *    NEXT_PUBLIC_* vars are inlined into the client bundle at build time.
- *    They are public — projectId, dataset, apiVersion are NOT secrets. A
- *    placeholder fallback turns a missing CI Build var into a silent
- *    SSG → Dynamic regression that surfaces as Cloudflare 1102 under
- *    traffic, not as a build error.
+ *    For Payload (server-side URL, required at Build time):
  *
- * 2. NO SHORT-CIRCUIT GUARDS in fetch helpers.
+ *    // ✅ CORRECT — let the build fail loudly if URL is missing:
+ *    const res = await fetch(`${process.env.PAYLOAD_API_URL}/api/posts`, ...);
  *
- *    // ❌ WRONG — hides build-time data when env is missing:
- *    export async function sanityFetch<T>(query: string): Promise<T[]> {
- *      if (!process.env.NEXT_PUBLIC_SANITY_PROJECT_ID) return [] as T[];
- *      return client.fetch(query);
- *    }
+ *    // ❌ WRONG — fake URL fetches against the wrong host or 404s silently:
+ *    const res = await fetch(
+ *      `${process.env.PAYLOAD_API_URL ?? 'https://placeholder.example.com'}/api/posts`
+ *    );
  *
- *    With real fallbacks in rule 1, this guard is a footgun. If you genuinely
- *    can't reach the CMS, let the fetch throw so the build fails loudly.
+ *    Public values (Sanity projectId/dataset/apiVersion, Payload public URL)
+ *    are fine to hardcode as fallbacks. Server-only secrets (API tokens) get
+ *    NO fallback — let them throw.
+ *
+ * 2. NO SHORT-CIRCUIT GUARDS in fetch helpers (CMS-agnostic).
+ *
+ *    // ❌ WRONG — Sanity:
+ *    if (!process.env.NEXT_PUBLIC_SANITY_PROJECT_ID) return [] as T[];
+ *
+ *    // ❌ WRONG — Payload:
+ *    if (!process.env.PAYLOAD_API_URL) return [];
+ *
+ *    // ❌ WRONG — generic try/catch that hides build-time failures:
+ *    try { return await client.fetch(query); } catch { return []; }
+ *
+ *    With real fallbacks in rule 1, these guards are footguns. If you
+ *    genuinely can't reach the CMS, let the fetch throw so the build
+ *    fails loudly. (The one exception: `getPostBySlug` returning `null`
+ *    for a real "not found" is correct — that's not a short-circuit on env.)
+ *
+ * 2a. PAYLOAD ON RAILWAY FREE TIER: server may be asleep at build time.
+ *
+ *    Railway's free tier sleeps idle services. If Cloudflare CI builds
+ *    against a sleeping Payload instance, the first generateStaticParams
+ *    fetch can time out → if wrapped in try/catch (rule 2 violation),
+ *    routes silently ship Dynamic. Two fixes:
+ *      - Warm up Payload before build: curl $PAYLOAD_API_URL/api/health &&
+ *        npx opennextjs-cloudflare build
+ *      - Or move Payload to a paid Railway plan.
  *
  * 3. ROOT LAYOUT FETCHES RUN ON EVERY RENDER.
  *
@@ -181,6 +207,10 @@ export async function getAllPosts(limit?: number): Promise<Post[]> {
   //   );
   //   const data = await res.json();
   //   return data.docs;
+  //   // NOTE: do NOT wrap this in try/catch returning []. If PAYLOAD_API_URL
+  //   // is missing or the server is asleep (Railway free tier), let it
+  //   // throw so the build fails loudly — silent failures cause SSG ->
+  //   // Dynamic regressions and Cloudflare 1102 under traffic.
 
   const sorted = [...PLACEHOLDER_POSTS].sort(
     (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()

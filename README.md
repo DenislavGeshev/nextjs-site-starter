@@ -239,21 +239,35 @@ Cloudflare Workers Builds has **two separate env stores** in the dashboard:
 - **Build variables and secrets** — available during `npx opennextjs-cloudflare build`
 - **Runtime variables and secrets** — available to the deployed Worker
 
-`NEXT_PUBLIC_*` env vars are **inlined into the JS bundle at build time** by Next.js. They MUST be in the Build environment, not just Runtime. If they're runtime-only, the build runs with the fallbacks in `src/lib/sanity.ts` (or your equivalent CMS client), every `generateStaticParams` returns `[]`, routes ship as `ƒ Dynamic` instead of `● SSG`, and you'll see Cloudflare 1102 (Worker CPU exceeded) errors under traffic.
+`NEXT_PUBLIC_*` env vars are **inlined into the JS bundle at build time** by Next.js. They MUST be in the Build environment, not just Runtime. Server-side env vars used by `generateStaticParams` (like `PAYLOAD_API_URL`) ALSO must be in the Build environment — the build process literally runs your data fetches.
 
-This boilerplate is wired so that, if you connect Sanity, you should hardcode the **real** public projectId/dataset/apiVersion as fallbacks in `createClient`. A missing Build var should produce a working site, not a silent SSG → Dynamic regression. See the CLAUDE.md guardrails section for the rules.
+If Build env is incomplete, the build runs with whatever fallbacks are in `src/lib/sanity.ts` / `src/lib/cms.ts`, `generateStaticParams` returns `[]`, routes ship as `ƒ Dynamic` instead of `● SSG`, and you'll see Cloudflare 1102 (Worker CPU exceeded) errors under traffic.
+
+This boilerplate is wired so that, if you connect Sanity, you should hardcode the **real** public projectId/dataset/apiVersion as fallbacks in `createClient`. A missing Build var should produce a working site, not a silent SSG → Dynamic regression. For Payload, never wrap fetches in `try { ... } catch { return [] }` — that hides the same failure. See CLAUDE.md guardrails for the full rules.
 
 | Variable | Build | Runtime | Notes |
 |---|---|---|---|
+| **Sanity** | | | |
 | `NEXT_PUBLIC_SANITY_PROJECT_ID` | ✅ | ✅ | Public, plain-text — also hardcoded as a fallback in `lib/sanity.ts` |
 | `NEXT_PUBLIC_SANITY_DATASET` | ✅ | ✅ | Public (usually `production`) |
 | `NEXT_PUBLIC_SANITY_API_VERSION` | ✅ | ✅ | Public (an ISO date like `2025-01-01`) |
 | `SANITY_API_TOKEN` | — | ✅ Secret | Server-only, runtime only |
 | `SANITY_WEBHOOK_SECRET` | — | ✅ Secret | Server-only, runtime only |
-| `PAYLOAD_API_URL` | ✅ | ✅ | Public URL (if using Payload) |
+| **Payload** | | | |
+| `PAYLOAD_API_URL` | ✅ | ✅ | Public URL (e.g. Railway). Required at Build because `generateStaticParams` fetches it. |
 | `PAYLOAD_API_KEY` | — | ✅ Secret | Server-only, runtime only |
+| `PAYLOAD_WEBHOOK_SECRET` | — | ✅ Secret | Server-only, runtime only |
 
 After a deploy, check the build logs for the `next build` route summary. If routes that should be `●` (SSG) are showing as `ƒ` (Dynamic), a Build env var is almost certainly missing.
+
+### Payload on Railway free tier: warm it up before build
+
+Railway's free tier sleeps idle services. If Cloudflare CI builds against a sleeping Payload instance, the first `generateStaticParams` fetch can time out → routes silently ship Dynamic → 1102 under traffic. Two fixes:
+
+1. **Add a CI warmup** — hit the Payload health endpoint before the OpenNext build runs (a pre-build hook or `curl ... && npx opennextjs-cloudflare build` is enough).
+2. **Move Payload to a paid Railway plan** that doesn't sleep — the safer option for production.
+
+Either way, **never** wrap Payload fetches in `try { ... } catch { return [] }`. That swallows the timeout, hides the regression, and is the exact pattern guardrail 2 in CLAUDE.md forbids.
 
 ### Image optimization on Cloudflare
 

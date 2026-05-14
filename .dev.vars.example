@@ -19,8 +19,12 @@ NEXT_PUBLIC_SANITY_API_VERSION=2025-01-01
 # SANITY_API_TOKEN=
 # SANITY_WEBHOOK_SECRET=
 
+# Payload - URL is public; required at BUILD env on Cloudflare
+# (generateStaticParams runs against it at build time).
 # PAYLOAD_API_URL=
+# Payload - server-only secrets (Runtime env only)
 # PAYLOAD_API_KEY=
+# PAYLOAD_WEBHOOK_SECRET=
 
 # R2_PUBLIC_URL=
 # NEXT_PUBLIC_PLAUSIBLE_DOMAIN=

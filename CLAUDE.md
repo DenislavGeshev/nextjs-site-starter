@@ -57,21 +57,61 @@ This site deploys to Cloudflare Workers via OpenNext, NOT to Vercel. There are s
 
 These rules exist because of two production failures we already paid for. Treat them as hard constraints unless the user explicitly opts out.
 
-### 1. Never use `'placeholder'` (or any fake value) as a Sanity fallback
+### 1. Never use placeholder/fake values as CMS env fallbacks
 
-`NEXT_PUBLIC_*` env vars are inlined into the JS bundle at build time. They are public by definition (projectId, dataset, apiVersion). When wiring up `lib/sanity.ts` or any CMS client, the fallback in `createClient({ projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? '...' })` MUST be the real projectId, not a placeholder string.
+CMS connection env vars (projectId, API URLs, dataset, apiVersion) must fall back to **real** working values, never to `'placeholder'`, `'undefined'`, or a fake URL.
 
-**Why:** A `'placeholder'` fallback turns a missing CI Build variable into a silent SSG → Dynamic regression. `generateStaticParams()` queries fail (caught by try/catch → return `[]`), dynamic routes ship as `ƒ Dynamic` instead of `● SSG`, every request hits the Worker, and the site melts under traffic with Cloudflare 1102 errors. A real fallback projectId means a missing Build var produces a working site, not a silent regression.
+**For Sanity** — `NEXT_PUBLIC_*` env vars are inlined into the JS bundle at build time. They are public by definition. The fallback in `createClient({ projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? '...' })` MUST be the real projectId.
 
-**How to apply:** Whenever wiring up `createClient` for Sanity or a similar CMS, hardcode the actual public values as fallbacks. Yes, even though they may feel like "secrets" — they are not secrets, they end up in the client bundle.
+```ts
+// ✅ CORRECT
+projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'abc123real',
+// ❌ WRONG — Sanity client accepts this without throwing, ships empty site
+projectId: process.env.NEXT_PUBLIC_SANITY_PROJECT_ID ?? 'placeholder',
+```
+
+**For Payload** — `PAYLOAD_API_URL` is server-side only (no `NEXT_PUBLIC_` prefix needed) but is required at BUILD time for `generateStaticParams`. Don't paper over a missing value with a fake URL:
+
+```ts
+// ✅ CORRECT — let the build fail loudly if URL is missing
+const res = await fetch(`${process.env.PAYLOAD_API_URL}/api/posts`, ...);
+// ❌ WRONG — a fake URL fetches successfully against the wrong host or 404s silently
+const res = await fetch(`${process.env.PAYLOAD_API_URL ?? 'https://placeholder.example.com'}/api/posts`, ...);
+```
+
+**Why:** A fake fallback turns a missing CI Build variable into a silent SSG → Dynamic regression. `generateStaticParams()` returns `[]`, dynamic routes ship as `ƒ Dynamic` instead of `● SSG`, every request hits the Worker, and the site melts under traffic with Cloudflare 1102 errors.
+
+**How to apply:** For values that are public (Sanity projectId/dataset/apiVersion, Payload API URL), hardcoding the real value as a fallback is fine — a missing CI Build var then produces a working site. For server-only secrets (API tokens), no fallback — let it throw.
 
 ### 2. Never short-circuit fetch helpers on missing env vars
 
-Do NOT add patterns like `if (!process.env.NEXT_PUBLIC_SANITY_PROJECT_ID) return []` inside `sanityFetch` or equivalents. With a real fallback projectId in `createClient` (rule 1), this guard silently hides build-time data and produces an empty site instead of an error.
+Do NOT add patterns that swallow missing-env errors and return empty data:
+
+```ts
+// ❌ WRONG — Sanity
+if (!process.env.NEXT_PUBLIC_SANITY_PROJECT_ID) return [];
+
+// ❌ WRONG — Payload
+if (!process.env.PAYLOAD_API_URL) return [];
+
+// ❌ WRONG — generic try/catch that hides build-time failures
+try { return await client.fetch(query); } catch { return []; }
+```
+
+With real fallbacks in `createClient` / the fetch URL (rule 1), these guards silently hide build-time data and produce an empty site instead of an error.
 
 **Why:** Same root cause as rule 1 — silent build-time failures are worse than loud ones. If you genuinely cannot reach the CMS, let it throw so the build fails visibly.
 
-**How to apply:** If you see this pattern, delete it. If a user asks you to add it, explain rules 1 and 2.
+**How to apply:** If you see this pattern, delete it. The one exception is `getPostBySlug` / single-item lookups that should legitimately return `null` for unknown slugs — those are NOT short-circuits on env, they're correct handling of "not found."
+
+### 2a. Payload + Railway free tier: the server may be asleep at build time
+
+Payload self-hosted on Railway's free tier sleeps after inactivity. If the Cloudflare CI build runs `generateStaticParams` against a sleeping Railway service, the first fetch can time out or 503 → if wrapped in try/catch returning `[]` (see rule 2), routes silently ship Dynamic.
+
+**How to apply:**
+- Don't wrap Payload fetches in try/catch returning `[]`.
+- If using Railway free tier and seeing intermittent build issues, either: (a) hit the Payload health endpoint as a CI warmup step before `npx opennextjs-cloudflare build`, or (b) move Payload to a paid Railway plan that doesn't sleep.
+- Alternative: use Payload's local API (server-side) instead of REST if Payload is co-located in the same project — no network round-trip, no sleep issue.
 
 ### 3. Don't enable `next/image` optimization unless Cloudflare Images is paid for on this account
 
@@ -202,8 +242,9 @@ Server components are faster, ship less JS, and are SEO-friendly. Don't reach fo
 - ❌ Don't commit `.env` or `.dev.vars` files (both are in `.gitignore`)
 - ❌ Don't use deprecated Next.js APIs (always check Context7 first)
 - ❌ Don't use Vercel-specific packages or APIs
-- ❌ Don't use `'placeholder'` (or any fake value) as a Sanity/CMS env fallback — see guardrail 1
-- ❌ Don't add `if (!process.env.X) return []` guards to CMS fetch helpers — see guardrail 2
+- ❌ Don't use `'placeholder'` or fake URLs as a CMS env fallback (Sanity OR Payload) — see guardrail 1
+- ❌ Don't add `if (!process.env.X) return []` guards or `try { ... } catch { return [] }` blocks to CMS fetch helpers — see guardrail 2
+- ❌ Don't ship Payload on Railway free tier without a CI warmup if SSG build fetches are critical — see guardrail 2a
 - ❌ Don't set `images.unoptimized: false` or add `"images": { "binding": "IMAGES" }` to `wrangler.jsonc` unless Cloudflare Images is paid for — see guardrail 3
 - ❌ Don't add CMS fetches to `src/app/layout.tsx` without long revalidation — see guardrail 4
 
